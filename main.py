@@ -1,6 +1,20 @@
 import time
+import os
+import threading
 import requests
 import xml.etree.ElementTree as ET
+from flask import Flask
+
+# Servidor web mini para que Render no suspenda el bot
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot de Chollos Activo 24/7"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 # ================= CONFIGURACIÓN =================
 TELEGRAM_TOKEN = "8662024286:AAHKzA8p_pN4Qt3NaGbYU-7Ybgh-IIY13SY"
@@ -61,8 +75,14 @@ def escanear_chollos():
     except Exception as e:
         print(f"Error al escanear: {e}")
 
-if __name__ == "__main__":
+def bucle_escaneo():
     print("Iniciando escáner continuo...")
     while True:
         escanear_chollos()
-        time.sleep(10)  # Revisa cada 10 segundos sin bloqueos de red
+        time.sleep(10)
+
+if __name__ == "__main__":
+    # Arranca el escáner de ofertas en segundo plano
+    threading.Thread(target=bucle_escaneo, daemon=True).start()
+    # Arranca el servidor web para Render
+    run_web_server()
