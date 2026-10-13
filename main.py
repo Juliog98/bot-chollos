@@ -5,7 +5,7 @@ import requests
 import xml.etree.ElementTree as ET
 from flask import Flask
 
-# Servidor web mini para que Render no suspenda el bot
+# Servidor web mini para mantener activo Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -17,14 +17,20 @@ def run_web_server():
     app.run(host="0.0.0.0", port=port)
 
 # ================= CONFIGURACIÓN =================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8662024286:AAHKzA8p_pN4Qt3NaGbYU-7Ybgh-IIY13SY")
+# Obtiene el token de forma 100% privada desde las Variables de Entorno de Render
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "507823530"
 
+# Filtro exclusivo de marcas de interés
 MARCAS_MOVILES = ["xiaomi", "poco", "iphone", "apple", "redmi"]
 OFERTAS_VISTAS = set()
 # ==================================================
 
 def enviar_alerta_telegram(mensaje):
+    if not TELEGRAM_TOKEN:
+        print("Error: No se ha configurado la variable TELEGRAM_TOKEN en Render.")
+        return
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
@@ -57,15 +63,13 @@ def escanear_chollos():
                 titulo_lower = titulo.lower()
                 enlace = item.find('link').text if item.find('link') is not None else ""
                 
+                # Solo notifica si coincide con las marcas seleccionadas
                 es_movil = any(m in titulo_lower for m in MARCAS_MOVILES)
-                es_error = any(p in titulo_lower for p in ["error de precio", "errordeprecio", "chollo loco", "glitch", "gratis", "-80%", "-90%"])
                 
-                if es_movil or es_error:
+                if es_movil:
                     OFERTAS_VISTAS.add(guid)
-                    tipo = "📱 **OFERTA EN MÓVILES**" if es_movil else "🚨 **¡ERROR DE PRECIO!**"
-                    
                     mensaje = (
-                        f"{tipo}\n\n"
+                        f"📱 **OFERTA DETECTADA**\n\n"
                         f"📌 **{titulo}**\n\n"
                         f"🛒 [VER ENLACE]({enlace})"
                     )
@@ -82,7 +86,5 @@ def bucle_escaneo():
         time.sleep(10)
 
 if __name__ == "__main__":
-    # Arranca el escáner de ofertas en segundo plano
     threading.Thread(target=bucle_escaneo, daemon=True).start()
-    # Arranca el servidor web para Render
     run_web_server()
