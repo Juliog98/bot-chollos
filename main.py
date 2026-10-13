@@ -1,11 +1,11 @@
 import time
 import os
+import re
 import threading
 import requests
 import xml.etree.ElementTree as ET
 from flask import Flask
 
-# Servidor web mini para mantener activo Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -17,11 +17,9 @@ def run_web_server():
     app.run(host="0.0.0.0", port=port)
 
 # ================= CONFIGURACIÓN =================
-# Obtiene el token de forma 100% privada desde las Variables de Entorno de Render
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "507823530"
 
-# Filtro exclusivo de marcas de interés
 MARCAS_MOVILES = ["xiaomi", "poco", "iphone", "apple", "redmi"]
 OFERTAS_VISTAS = set()
 # ==================================================
@@ -43,6 +41,15 @@ def enviar_alerta_telegram(mensaje):
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
+def es_descuento_mayor_o_igual_50(texto):
+    """Busca porcentajes como -50%, -60%, 75%, etc., y verifica si son >= 50%"""
+    coincidencias = re.findall(r'-?(\d+)\s*%', texto)
+    for porcentaje_str in coincidencias:
+        porcentaje = int(porcentaje_str)
+        if porcentaje >= 50:
+            return True, porcentaje
+    return False, 0
+
 def escanear_chollos():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
@@ -63,13 +70,22 @@ def escanear_chollos():
                 titulo_lower = titulo.lower()
                 enlace = item.find('link').text if item.find('link') is not None else ""
                 
-                # Solo notifica si coincide con las marcas seleccionadas
+                # Criterios de filtrado
                 es_movil = any(m in titulo_lower for m in MARCAS_MOVILES)
+                tiene_gran_descuento, porcentaje = es_descuento_mayor_o_igual_50(titulo_lower)
                 
-                if es_movil:
+                if es_movil or tiene_gran_descuento:
                     OFERTAS_VISTAS.add(guid)
+                    
+                    if es_movil and tiene_gran_descuento:
+                        etiqueta = f"🔥 **OFERTA {porcentaje}% EN MÓVILES**"
+                    elif es_movil:
+                        etiqueta = "📱 **OFERTA EN MÓVILES**"
+                    else:
+                        etiqueta = f"🚨 **SUPER DESCUENTO ({porcentaje}%)**"
+                    
                     mensaje = (
-                        f"📱 **OFERTA DETECTADA**\n\n"
+                        f"{etiqueta}\n\n"
                         f"📌 **{titulo}**\n\n"
                         f"🛒 [VER ENLACE]({enlace})"
                     )
