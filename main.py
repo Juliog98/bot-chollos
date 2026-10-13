@@ -17,7 +17,7 @@ def run_web_server():
     app.run(host="0.0.0.0", port=port)
 
 # ================= CONFIGURACIÓN =================
-TELEGRAM_TOKEN = "8662024286:AAHKzA8p_pN4Qt3NaGbYU-7Ybgh-IIY13SY"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8662024286:AAHKzA8p_pN4Qt3NaGbYU-7Ybgh-IIY13SY")
 CHAT_ID = "507823530"
 
 MARCAS_MOVILES = ["xiaomi", "poco", "iphone", "apple", "redmi"]
