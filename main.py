@@ -13,7 +13,7 @@ from urllib.parse import urlparse, quote_plus
 from flask import Flask
 
 # =========================================================
-# CONFIGURACIÓN Y UMBRALES
+# CONFIGURACIÓN
 # =========================================================
 
 app = Flask(__name__)
@@ -50,20 +50,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =========================================================
-# SERVIDOR WEB Y MONITOREO
+# SERVIDOR WEB PARA UPTIMEROBOT & RENDER
 # =========================================================
 
 @app.route("/")
 def home():
-    return "Bot de Chollos Activo 24/7", 200
+    return "OK - Bot de Chollos Activo", 200
 
 @app.route("/health")
 def health():
-    return {"status": "ok", "feeds": len(FEEDS_RSS)}, 200
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    return {"status": "ok"}, 200
 
 # =========================================================
 # BASE DE DATOS Y DEDUPLICACIÓN
@@ -273,10 +269,6 @@ def escanear_chollos():
 
     logger.info("Ciclo finalizado | %s ofertas analizadas | %.2f s", total, time.monotonic() - inicio)
 
-# =========================================================
-# BUCLE PRINCIPAL
-# =========================================================
-
 def bucle_escaneo():
     logger.info("Iniciando escáner de ofertas directo.")
     while True:
@@ -289,7 +281,16 @@ def bucle_escaneo():
         espera = max(0, INTERVALO_ESCANEO - duracion)
         time.sleep(espera)
 
+# =========================================================
+# EJECUCIÓN PRINCIPAL
+# =========================================================
+
+inicializar_bd()
+
+# Iniciar el escáner de chollos en segundo plano
+threading.Thread(target=bucle_escaneo, daemon=True).start()
+
+# El proceso principal ejecuta Flask en el puerto asignado por Render
 if __name__ == "__main__":
-    inicializar_bd()
-    threading.Thread(target=bucle_escaneo, daemon=True).start()
-    run_web_server()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
