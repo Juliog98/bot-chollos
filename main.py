@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot de Chollos Activo 24/7"
+    return "Bot de Chollos Tech Activo 24/7"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -21,6 +21,23 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "507823530"
 
 MARCAS_MOVILES = ["xiaomi", "poco", "iphone", "apple", "redmi"]
+TIENDAS_TECH = ["amazon", "pccomponentes", "pc componentes", "aliexpress", "mediamarkt", "mi.com"]
+
+# Lista ampliada de fuentes RSS directas (Chollometro, Portales Tech y Agregadores de Amazon/Tech)
+FEEDS_RSS = [
+    # Chollometro (Nuevos, Tendencias, Populares y Sección Electrónica)
+    "https://www.chollometro.com/rss/nuevos",
+    "https://www.chollometro.com/rss/tendencias",
+    "https://www.chollometro.com/rss/populares",
+    "https://www.chollometro.com/rss/categorias/electronica",
+    
+    # Portales especializados en ofertas de Amazon, PcComponentes y AliExpress en España
+    "https://www.blogdechollos.com/feed/",
+    "https://www.ofertitas.es/feed/",
+    "https://www.chollodeals.es/feed/",
+    "https://www.compradiccion.com/index.xml"
+]
+
 OFERTAS_VISTAS = set()
 # ==================================================
 
@@ -42,7 +59,6 @@ def enviar_alerta_telegram(mensaje):
         print(f"Error en Telegram: {e}")
 
 def es_descuento_mayor_o_igual_50(texto):
-    """Busca porcentajes como -50%, -60%, 75%, etc., y verifica si son >= 50%"""
     coincidencias = re.findall(r'-?(\d+)\s*%', texto)
     for porcentaje_str in coincidencias:
         porcentaje = int(porcentaje_str)
@@ -54,52 +70,63 @@ def escanear_chollos():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
     }
-    url_rss = "https://www.chollometro.com/rss/nuevos"
     
-    try:
-        response = requests.get(url_rss, headers=headers, timeout=10)
-        if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            for item in root.findall('.//item'):
-                guid = item.find('guid').text if item.find('guid') is not None else item.find('link').text
+    for url_rss in FEEDS_RSS:
+        try:
+            response = requests.get(url_rss, headers=headers, timeout=10)
+            if response.status_code == 200:
+                root = ET.fromstring(response.content)
                 
-                if guid in OFERTAS_VISTAS:
-                    continue
+                # Soporte para formatos RSS (item) y Atom (entry)
+                items = root.findall('.//item') or root.findall('.//{http://www.w3.org/2005/Atom}entry')
                 
-                titulo = item.find('title').text if item.find('title') is not None else ""
-                titulo_lower = titulo.lower()
-                enlace = item.find('link').text if item.find('link') is not None else ""
-                
-                # Criterios de filtrado
-                es_movil = any(m in titulo_lower for m in MARCAS_MOVILES)
-                tiene_gran_descuento, porcentaje = es_descuento_mayor_o_igual_50(titulo_lower)
-                
-                if es_movil or tiene_gran_descuento:
-                    OFERTAS_VISTAS.add(guid)
+                for item in items:
+                    guid_elem = item.find('guid') or item.find('{http://www.w3.org/2005/Atom}id') or item.find('link')
+                    guid = guid_elem.text if guid_elem is not None else ""
                     
-                    if es_movil and tiene_gran_descuento:
-                        etiqueta = f"🔥 **OFERTA {porcentaje}% EN MÓVILES**"
-                    elif es_movil:
-                        etiqueta = "📱 **OFERTA EN MÓVILES**"
+                    if not guid or guid in OFERTAS_VISTAS:
+                        continue
+                    
+                    title_elem = item.find('title') or item.find('{http://www.w3.org/2005/Atom}title')
+                    titulo = title_elem.text if title_elem is not None else ""
+                    titulo_lower = titulo.lower()
+                    
+                    link_elem = item.find('link') or item.find('{http://www.w3.org/2005/Atom}link')
+                    if link_elem is not None:
+                        enlace = link_elem.attrib.get('href') if 'href' in link_elem.attrib else link_elem.text
                     else:
-                        etiqueta = f"🚨 **SUPER DESCUENTO ({porcentaje}%)**"
+                        enlace = ""
                     
-                    mensaje = (
-                        f"{etiqueta}\n\n"
-                        f"📌 **{titulo}**\n\n"
-                        f"🛒 [VER ENLACE]({enlace})"
-                    )
-                    enviar_alerta_telegram(mensaje)
-                    print(f"Alerta enviada: {titulo}")
+                    es_marca = any(m in titulo_lower for m in MARCAS_MOVILES)
+                    es_tienda_tech = any(t in titulo_lower for t in TIENDAS_TECH)
+                    tiene_gran_descuento, porcentaje = es_descuento_mayor_o_igual_50(titulo_lower)
                     
-    except Exception as e:
-        print(f"Error al escanear: {e}")
+                    if es_marca or (es_tienda_tech and tiene_gran_descuento) or tiene_gran_descuento:
+                        OFERTAS_VISTAS.add(guid)
+                        
+                        if es_marca and tiene_gran_descuento:
+                            etiqueta = f"🔥 **CHOLLO {porcentaje}% EN MÓVILES**"
+                        elif es_marca:
+                            etiqueta = "📱 **OFERTA EN MÓVILES**"
+                        else:
+                            etiqueta = f"🚨 **CHOLLO TECH ({porcentaje}%)**"
+                        
+                        mensaje = (
+                            f"{etiqueta}\n\n"
+                            f"📌 **{titulo}**\n\n"
+                            f"🛒 [VER ENLACE]({enlace})"
+                        )
+                        enviar_alerta_telegram(mensaje)
+                        print(f"Alerta enviada: {titulo}")
+                        
+        except Exception as e:
+            print(f"Error escaneando {url_rss}: {e}")
 
 def bucle_escaneo():
-    print("Iniciando escáner continuo...")
+    print("Iniciando escáner multicanal 24/7...")
     while True:
         escanear_chollos()
-        time.sleep(10)
+        time.sleep(15)
 
 if __name__ == "__main__":
     threading.Thread(target=bucle_escaneo, daemon=True).start()
