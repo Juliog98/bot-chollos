@@ -26,7 +26,11 @@ TIEMPO_ESPERA = 10
 MAX_TRABAJADORES = 8
 RUTA_BD = os.environ.get("DB_PATH", "ofertas.db")
 
-UMBRAL_DESCUENTO_GENERAL = 50
+# Nuevo umbral general: 80% o más de descuento
+UMBRAL_DESCUENTO_GENERAL = 80
+
+# Palabras clave del modelo específico solicitado
+MODELOS_ESPECIFICOS = ["poco x8 pro", "poco x8pro"]
 
 FEEDS_RSS = [
     "https://www.chollometro.com/rss/nuevos",
@@ -38,8 +42,6 @@ FEEDS_RSS = [
     "https://www.chollodeals.es/feed/",
     "https://www.compradiccion.com/index.xml",
 ]
-
-MARCAS_PRIORITARIAS = ["xiaomi", "poco", "iphone", "apple", "redmi"]
 
 bloqueo_bd = threading.Lock()
 
@@ -187,18 +189,20 @@ def evaluar_oferta(item):
     titulo_lower = titulo.lower()
     texto_completo = f"{titulo} {item['descripcion']}"
     
-    es_marca = any(m in titulo_lower for m in MARCAS_PRIORITARIAS)
+    es_modelo_deseado = any(m in titulo_lower for m in MODELOS_ESPECIFICOS)
     descuento = detectar_descuento(texto_completo)
 
-    if not es_marca and descuento < UMBRAL_DESCUENTO_GENERAL:
+    # Si NO es el POCO X8 Pro y tampoco alcanza el 80% de descuento general, se descarta
+    if not es_modelo_deseado and descuento < UMBRAL_DESCUENTO_GENERAL:
         return None
 
-    if es_marca and descuento >= UMBRAL_DESCUENTO_GENERAL:
-        etiqueta = f"🔥 <b>[CHOLLO EN MÓVILES -{descuento}%]</b>"
-    elif es_marca:
-        etiqueta = "📱 <b>[OFERTA EN MÓVILES]</b>"
+    # Asignar etiqueta según el tipo de oferta
+    if es_modelo_deseado and descuento >= 50:
+        etiqueta = f"💥 <b>[CHOLLO MÁXIMO POCO X8 PRO -{descuento}%]</b>"
+    elif es_modelo_deseado:
+        etiqueta = f"📱 <b>[OFERTA POCO X8 PRO]</b>"
     else:
-        etiqueta = f"🚨 <b>[CHOLLO TECH GENERAL -{descuento}%]</b>"
+        etiqueta = f"🚨 <b>[SUPER MEGA CHOLLO GENERAL -{descuento}%]</b>"
 
     titulo_seguro = html.escape(titulo)
     enlace_seguro = html.escape(item["enlace"], quote=True)
@@ -270,7 +274,7 @@ def escanear_chollos():
     logger.info("Ciclo finalizado | %s ofertas analizadas | %.2f s", total, time.monotonic() - inicio)
 
 def bucle_escaneo():
-    logger.info("Iniciando escáner de ofertas directo.")
+    logger.info("Iniciando escáner de ofertas directo con nuevos filtros.")
     while True:
         inicio = time.monotonic()
         try:
