@@ -22,13 +22,11 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID", "507823530")
 
 INTERVALO_ESCANEO = 60
-TIEMPO_ESPERA = 12
+TIEMPO_ESPERA = 10
 MAX_TRABAJADORES = 8
 RUTA_BD = os.environ.get("DB_PATH", "ofertas.db")
 
-UMBRAL_DESCUENTO_GENERAL = 50   # Mínimo 50% para tech general
-UMBRAL_DESCUENTO_APPLE = 25     # Mínimo 25% para Apple
-UMBRAL_DESCUENTO_ANDROID = 35   # Mínimo 35% para Xiaomi, POCO, Redmi
+UMBRAL_DESCUENTO_GENERAL = 50
 
 FEEDS_RSS = [
     "https://www.chollometro.com/rss/nuevos",
@@ -41,11 +39,9 @@ FEEDS_RSS = [
     "https://www.compradiccion.com/index.xml",
 ]
 
-MARCAS_APPLE = ["iphone", "apple", "ipad", "macbook"]
-MARCAS_ANDROID = ["xiaomi", "poco", "redmi"]
+MARCAS_PRIORITARIAS = ["xiaomi", "poco", "iphone", "apple", "redmi"]
 
 bloqueo_bd = threading.Lock()
-PRIMER_ARRANQUE = True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,11 +55,11 @@ logger = logging.getLogger(__name__)
 
 @app.route("/")
 def home():
-    return "Bot de Chollos Tech Activo 24/7", 200
+    return "Bot de Chollos Activo 24/7", 200
 
 @app.route("/health")
 def health():
-    return {"status": "ok", "feeds_configurados": len(FEEDS_RSS)}, 200
+    return {"status": "ok", "feeds": len(FEEDS_RSS)}, 200
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -130,7 +126,7 @@ def enviar_alerta_telegram(mensaje):
         return False
 
 # =========================================================
-# EXTRACCIÓN Y LIMPIEZA XML
+# EXTRACCIÓN DE FEEDS
 # =========================================================
 
 def nombre_local(etiqueta):
@@ -181,79 +177,45 @@ def extraer_items(contenido):
     return items
 
 # =========================================================
-# DETECCIÓN DE DESCUENTOS Y CLASIFICACIÓN
+# FILTRADO DE ALERTAS
 # =========================================================
 
-def detectar_descuento_real(texto):
-    """
-    Detecta exclusivamente descuentos de rebaja real (-50%, 50% DTO, dto. 50%)
-    e ignora menciones de cashback, cupones pequeños o comisiones.
-    """
+def detectar_descuento(texto):
     texto = html.unescape(texto or "").lower()
-    
-    # Ignorar contexto de cashback o cupones secundarios en la frase
-    texto_limpio = re.sub(r'(cashback|monedero|cupon|cupón)\s*(\d{1,2}%|\d{1,2}\s*€)', '', texto)
-
-    patrones = [
-        r"-\s*(\d{1,2})\s*%",                   # -50%
-        r"(\d{1,2})\s*%\s*(?:de\s+)?descuento", # 50% de descuento
-        r"(\d{1,2})\s*%\s*dto",                 # 50% dto
-        r"dto\.?\s*(\d{1,2})\s*%",               # dto. 50%
-        r"ahorras?\s*(\d{1,2})\s*%"             # ahorra 50%
-    ]
-
-    porcentajes = []
-    for p in patrones:
-        coincidencias = re.findall(p, texto_limpio)
-        for val in coincidencias:
-            num = int(val)
-            if 1 <= num <= 99:
-                porcentajes.append(num)
-
-    return max(porcentajes, default=0)
-
-def obtener_enlace_historico(titulo, enlace):
-    if "amazon" in enlace.lower() or "amazon" in titulo.lower():
-        busqueda = quote_plus(titulo[:50])
-        return f"https://es.camelcamelcamel.com/search?sq={busqueda}"
-    return None
+    coincidencias = re.findall(r'-?(\d{1,2})\s*%', texto)
+    nums = [int(n) for n in coincidencias if 1 <= int(n) <= 99]
+    return max(nums, default=0)
 
 def evaluar_oferta(item):
     titulo = item["titulo"]
     titulo_lower = titulo.lower()
     texto_completo = f"{titulo} {item['descripcion']}"
-    descuento = detectar_descuento_real(texto_completo)
+    
+    es_marca = any(m in titulo_lower for m in MARCAS_PRIORITARIAS)
+    descuento = detectar_descuento(texto_completo)
 
-    es_apple = any(m in titulo_lower for m in MARCAS_APPLE)
-    es_android = any(m in titulo_lower for m in MARCAS_ANDROID)
-
-    tipo_alerta = None
-
-    # Regla 1: Apple con descuento o mención directa
-    if es_apple:
-        if descuento >= UMBRAL_DESCUENTO_APPLE or descuento == 0:
-            tipo_alerta = "📱 <b>[MÓVIL / APPLE]</b>"
-    # Regla 2: Android con descuento o mención directa
-    elif es_android:
-        if descuento >= UMBRAL_DESCUENTO_ANDROID or descuento == 0:
-            tipo_alerta = "📱 <b>[MÓVIL / ANDROID]</b>"
-    # Regla 3: Ofertas generales de tecnología (SOLO si tienen descuento explícito >= 50%)
-    elif descuento >= UMBRAL_DESCUENTO_GENERAL:
-        tipo_alerta = "🚨 <b>[CHOLLO TECH GENERAL]</b>"
-
-    # CORRECCIÓN 1: Si no coincide con las reglas o es general sin % real, se descarta.
-    if not tipo_alerta:
+    if not es_marca and descuento < UMBRAL_DESCUENTO_GENERAL:
         return None
+
+    if es_marca and descuento >= UMBRAL_DESCUENTO_GENERAL:
+        etiqueta = f"🔥 <b>[CHOLLO EN MÓVILES -{descuento}%]</b>"
+    elif es_marca:
+        etiqueta = "📱 <b>[OFERTA EN MÓVILES]</b>"
+    else:
+        etiqueta = f"🚨 <b>[CHOLLO TECH GENERAL -{descuento}%]</b>"
 
     titulo_seguro = html.escape(titulo)
     enlace_seguro = html.escape(item["enlace"], quote=True)
-    desc_str = f" ({descuento}% desc.)" if descuento > 0 else ""
 
-    mensaje = f"{tipo_alerta}{desc_str}\n\n📌 <b>{titulo_seguro}</b>\n\n🛒 <a href=\"{enlace_seguro}\">VER OFERTA</a>"
+    mensaje = (
+        f"{etiqueta}\n\n"
+        f"📌 <b>{titulo_seguro}</b>\n\n"
+        f'🛒 <a href="{enlace_seguro}">VER ENLACE EN TIENDA</a>'
+    )
 
-    url_historico = obtener_enlace_historico(titulo, item["enlace"])
-    if url_historico:
-        mensaje += f' | 📊 <a href="{url_historico}">HISTÓRICO PRECIOS</a>'
+    if "amazon" in item["enlace"].lower() or "amazon" in titulo_lower:
+        busqueda = quote_plus(titulo[:40])
+        mensaje += f' | 📊 <a href="https://es.camelcamelcamel.com/search?sq={busqueda}">HISTÓRICO</a>'
 
     return mensaje
 
@@ -266,7 +228,7 @@ def descargar_feed(url):
     try:
         respuesta = requests.get(
             url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ChollosBot/3.0)"},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
             timeout=TIEMPO_ESPERA,
         )
         respuesta.raise_for_status()
@@ -277,14 +239,9 @@ def descargar_feed(url):
         logger.warning("Fallo en feed [%s]: %s", url, error)
         return url, []
 
-def procesar_oferta(item, fuente, silencioso=False):
+def procesar_oferta(item, fuente):
     guid = item["guid"]
     if oferta_ya_vista(guid):
-        return
-
-    # CORRECCIÓN 3: Si es el primer arranque, guardamos sin notificar en Telegram
-    if silencioso:
-        guardar_oferta(guid, item["titulo"])
         return
 
     mensaje = evaluar_oferta(item)
@@ -296,7 +253,6 @@ def procesar_oferta(item, fuente, silencioso=False):
         logger.info("Alerta enviada desde %s: %s", fuente, item["titulo"])
 
 def escanear_chollos():
-    global PRIMER_ARRANQUE
     inicio = time.monotonic()
     resultados = []
 
@@ -310,25 +266,19 @@ def escanear_chollos():
                 logger.exception("Error procesando tarea de feed.")
 
     total = 0
-    silencioso = PRIMER_ARRANQUE
-
     for fuente, items in resultados:
         for item in items:
-            procesar_oferta(item, fuente, silencioso=silencioso)
+            procesar_oferta(item, fuente)
             total += 1
 
-    if PRIMER_ARRANQUE:
-        logger.info("Primer arranque completado. Pre-cargadas %s ofertas sin notificar para evitar spam.", total)
-        PRIMER_ARRANQUE = False
-    else:
-        logger.info("Ciclo finalizado | %s ofertas analizadas | %.2f s", total, time.monotonic() - inicio)
+    logger.info("Ciclo finalizado | %s ofertas analizadas | %.2f s", total, time.monotonic() - inicio)
 
 # =========================================================
 # BUCLE PRINCIPAL
 # =========================================================
 
 def bucle_escaneo():
-    logger.info("Iniciando escáner de ofertas optimizado.")
+    logger.info("Iniciando escáner de ofertas directo.")
     while True:
         inicio = time.monotonic()
         try:
