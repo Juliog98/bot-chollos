@@ -175,24 +175,48 @@ def extraer_items(contenido):
     return items
 
 # =========================================================
-# FILTRADO DE ALERTAS
+# FILTRADO DE ALERTAS MEJORADO
 # =========================================================
 
 def detectar_descuento(texto):
-    texto = html.unescape(texto or "").lower()
-    coincidencias = re.findall(r'-?(\d{1,2})\s*%', texto)
+    if not texto:
+        return 0
+    
+    texto = html.unescape(texto).lower()
+
+    # 1. Eliminar frases de marketing engañosas antes de buscar números
+    patrones_falsos = [
+        r'hasta\s*(el|un)?\s*\d{1,2}\s*%',
+        r'hasta\s*\d{1,2}\s*%',
+        r'en toda la tienda',
+        r'en la web',
+        r'en seleccionados'
+    ]
+    texto_limpio = texto
+    for patron in patrones_falsos:
+        texto_limpio = re.sub(patron, '', texto_limpio)
+
+    # 2. Extraer porcentajes reales del texto limpio
+    coincidencias = re.findall(r'-?(\d{1,2})\s*%', texto_limpio)
     nums = [int(n) for n in coincidencias if 1 <= int(n) <= 99]
+    
     return max(nums, default=0)
 
 def evaluar_oferta(item):
     titulo = item["titulo"]
     titulo_lower = titulo.lower()
-    texto_completo = f"{titulo} {item['descripcion']}"
+    descripcion = item["descripcion"] or ""
     
     es_modelo_deseado = any(m in titulo_lower for m in MODELOS_ESPECIFICOS)
-    descuento = detectar_descuento(texto_completo)
 
-    # Si NO es el POCO X8 Pro y tampoco alcanza el 80% de descuento general, se descarta
+    # Buscar descuento PRIMERO en el título (donde está el dato real)
+    descuento = detectar_descuento(titulo)
+
+    # Si no hay descuento en el título, buscar en la descripción limpia
+    if descuento == 0:
+        descuento = detectar_descuento(descripcion)
+
+    # Si NO es el POCO X8 Pro y tampoco alcanza el 80% real, se descarta
     if not es_modelo_deseado and descuento < UMBRAL_DESCUENTO_GENERAL:
         return None
 
